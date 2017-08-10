@@ -1147,9 +1147,7 @@ mod tests {
         let logged_id = 1;
 
         let future = SqlConnection::connect(lp.handle(), connection_string.as_str())
-            .and_then(|conn| conn.query( "declare @p1 nvarchar(250) = 'jake@jake.jake'
-declare @p2 int = 1
-
+            .and_then(|conn| conn.query( "
 SELECT [Email],[Token],[UserName],[Bio],[Image] ,
 ( SELECT COUNT(*) FROM (SELECT 1 as FollowingId, 1 as FollowerId UNION ALL SELECT 2 as FollowingId, 1 as FollowerId 
 UNION ALL SELECT 3 as FollowingId, 1 as FollowerId UNION ALL SELECT 4 as FollowingId, 1 as FollowerId
@@ -1161,6 +1159,16 @@ UNION ALL SELECT 9 as FollowingId, 1 as FollowerId
 UNION ALL SELECT 10 as FollowingId, 1 as FollowerId
 UNION ALL SELECT 11 as FollowingId, 1 as FollowerId
 UNION ALL SELECT 12 as FollowingId, 1 as FollowerId
+UNION ALL SELECT 13 as FollowingId, 1 as FollowerId UNION ALL SELECT 14 as FollowingId, 1 as FollowerId 
+UNION ALL SELECT 15 as FollowingId, 1 as FollowerId UNION ALL SELECT 16 as FollowingId, 1 as FollowerId
+UNION ALL SELECT 17 as FollowingId, 1 as FollowerId
+UNION ALL SELECT 18 as FollowingId, 1 as FollowerId
+UNION ALL SELECT 19 as FollowingId, 1 as FollowerId
+UNION ALL SELECT 20 as FollowingId, 1 as FollowerId
+UNION ALL SELECT 21 as FollowingId, 1 as FollowerId
+UNION ALL SELECT 22 as FollowingId, 1 as FollowerId
+UNION ALL SELECT 23 as FollowingId, 1 as FollowerId
+UNION ALL SELECT 24 as FollowingId, 1 as FollowerId
 ) F WHERE F.[FollowingId] = Id AND F.FollowerId = @P2 ) as Following
 FROM ( SELECT 1 Id, 'jake@jake.jake' [Email],'jake@jake.jake' [Token],'jake@jake.jake' [UserName], NULL [Bio],NULL [Image] UNION ALL
 SELECT 2 Id, 'jake@jake.jake' [Email],'jake@jake.jake' [Token],'jake@jake.jake' [UserName], NULL [Bio],NULL [Image]
@@ -1184,7 +1192,31 @@ UNION ALL
 SELECT 11 Id, 'jake@jake.jake' [Email],'jake@jake.jake' [Token],'jake@jake.jake' [UserName], NULL [Bio],NULL [Image]
 UNION ALL
 SELECT 12 Id, 'jake@jake.jake' [Email],'jake@jake.jake' [Token],'jake@jake.jake' [UserName], NULL [Bio],NULL [Image]
-) X WHERE [UserName] = @P1", &[&(profile.as_str()), &logged_id] )
+UNION ALL
+SELECT 13 Id, 'jake@jake.jake' [Email],'jake@jake.jake' [Token],'jake@jake.jake' [UserName], NULL [Bio],NULL [Image] UNION ALL
+SELECT 14 Id, 'jake@jake.jake' [Email],'jake@jake.jake' [Token],'jake@jake.jake' [UserName], NULL [Bio],NULL [Image]
+UNION ALL
+SELECT 15 Id, 'jake@jake.jake' [Email],'jake@jake.jake' [Token],'jake@jake.jake' [UserName], NULL [Bio],NULL [Image]
+UNION ALL
+SELECT 16 Id, 'jake@jake.jake' [Email],'jake@jake.jake' [Token],'jake@jake.jake' [UserName], NULL [Bio],NULL [Image]
+UNION ALL
+SELECT 17 Id, 'jake@jake.jake' [Email],'jake@jake.jake' [Token],'jake@jake.jake' [UserName], NULL [Bio],NULL [Image]
+UNION ALL
+SELECT 18 Id, 'jake@jake.jake' [Email],'jake@jake.jake' [Token],'jake@jake.jake' [UserName], NULL [Bio],NULL [Image]
+UNION ALL
+SELECT 19 Id, 'jake@jake.jake' [Email],'jake@jake.jake' [Token],'jake@jake.jake' [UserName], NULL [Bio],NULL [Image]
+UNION ALL
+SELECT 20 Id, 'jake@jake.jake' [Email],'jake@jake.jake' [Token],'jake@jake.jake' [UserName], NULL [Bio],NULL [Image]
+UNION ALL
+SELECT 21 Id, 'jake@jake.jake' [Email],'jake@jake.jake' [Token],'jake@jake.jake' [UserName], NULL [Bio],NULL [Image]
+UNION ALL
+SELECT 22 Id, 'jake@jake.jake' [Email],'jake@jake.jake' [Token],'jake@jake.jake' [UserName], NULL [Bio],NULL [Image]
+UNION ALL
+SELECT 23 Id, 'jake@jake.jake' [Email],'jake@jake.jake' [Token],'jake@jake.jake' [UserName], NULL [Bio],NULL [Image]
+UNION ALL
+SELECT 24 Id, 'jake@jake.jake' [Email],'jake@jake.jake' [Token],'jake@jake.jake' [UserName], NULL [Bio],NULL [Image]
+) X WHERE [UserName] = @P1
+", &[&(profile.as_str()), &logged_id] )
                 .for_each_row( |row| { 
                     let _ : &str = row.get(0);
                     let _ : &str = row.get(1);
