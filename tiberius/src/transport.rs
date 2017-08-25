@@ -31,7 +31,7 @@ pub mod tls {
     use futures::Poll;
     use tokio_io::{AsyncRead, AsyncWrite};
     use protocol::{self, PacketHeader, PacketType, PacketStatus};
-    use transport::{Io, TdsPacketId};
+    use transport::Io;
     pub use self::native_tls::TlsConnector;
     pub use self::tokio_tls::{TlsConnectorExt, ConnectAsync, TlsStream};
     use TdsError;
@@ -246,9 +246,7 @@ pub mod tls {
             extern crate schannel;
             use transport::tls::native_tls::backend::schannel::TlsConnectorBuilderExt;
             if disable_verification {
-                builder.verify_callback(move |result| {
-                    return Ok(());
-                });
+                builder.verify_callback(|_| Ok(()));
             }
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -282,35 +280,34 @@ pub type TlsStream<S: Io> = S;
 #[cfg(not(feature = "tls"))]
 pub type TransportStream<S: Io> = S;
 
+#[derive(Debug)]
 pub struct NVarcharPLPTyState {
     pub bytes: Vec<u16>,
     pub chunk_left: Option<usize>,
     pub leftover: Option<u8>,
 }
 
+#[derive(Debug)]
 pub enum ReadTyState {
-    None,
     NVarcharPLP(NVarcharPLPTyState),
     NVarchar(Vec<u16>),
 }
 
+#[derive(Debug)]
 pub enum ReadState {
-    None,
     Generic(Tokens, Option<usize>),
-    Row(Tokens, Vec<ColumnData<'static>>, ReadTyState),
+    Row(Tokens, Vec<ColumnData<'static>>, Option<ReadTyState>),
 
     Type(ReadTyState),
 }
 
 pub struct TdsTransport<I: Io> {
     pub inner: TdsTransportInner<I>,
-    pub read_state: ReadState,
-    /// whether to reset the position, if parsing this token fails (see comment below)
-    pub read_reset: bool,
+    pub read_state: Option<ReadState>,
     /// the last buffer which will be resetted to if not enough data is available
     /// needed for parsers where simply trying until enough data is available is not expensive enough
     /// that writing a stateful parser would be worth it
-    pub last_state: TdsBuf,
+    pub last_state: Option<TdsBuf>,
     pub transaction: u64,
     reinject_token: Option<TdsResponseToken>,
 }
@@ -475,7 +472,7 @@ impl io::Read for TdsBuf {
 
     #[inline]
     #[allow(unused_io_amount)]
-    fn read_exact(&mut self, mut buf: &mut [u8]) -> io::Result<()> {
+    fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
         try!(self.read(buf));
         Ok(())
     }
@@ -514,9 +511,8 @@ impl<I: Io> TdsTransport<I> {
                 last_meta: None,
                 row_bitmap: None,
             },
-            read_state: ReadState::None,
-            read_reset: true,
-            last_state: TdsBuf::empty(),
+            read_state: None,
+            last_state: None,
             transaction: 0,
             reinject_token: None,
         }
@@ -535,49 +531,51 @@ impl<I: Io> TdsTransport<I> {
     }
 
     #[inline]
-    pub fn take_read_state(&mut self) -> ReadState {
-        mem::replace(&mut self.read_state, ReadState::None)
+    pub fn commit_read_state<S: Into<Option<ReadState>>>(&mut self, state: S) {
+        self.last_state = Some(self.inner.rd.clone());
+        self.read_state = state.into();
     }
 
     /// returns a parsed token
     fn read_token(&mut self) -> Poll<TdsResponseToken, TdsError> {
         let (token, size_hint) = {
             // read a token
-            if let ReadState::None = self.read_state {
+            if self.read_state.is_none() {
                 let raw_token = try!(self.inner.read_u8());
                 let token = Tokens::from_u8(raw_token);
 
-                self.read_state = match token {
+                self.commit_read_state(match token {
                     Some(token) => ReadState::Generic(token, None),
                     None => panic!("invalid token received 0x{:x}", raw_token),
-                };
+                });
             }
 
             // read the associated length for a token, if available
-            if let ReadState::Generic(token, None) = self.read_state {
-                self.read_state = match token {
+            if let Some(ReadState::Generic(token, None)) = self.read_state {
+                let new_state = match token {
                     Tokens::SSPI | Tokens::EnvChange | Tokens::Info | Tokens::Error | Tokens::LoginAck => {
                         ReadState::Generic(token, Some(try!(self.inner.read_u16::<LittleEndian>()) as usize))
                     },
                     Tokens::Row | Tokens::NbcRow => {
                         let len = self.inner.last_meta.as_ref().map(|lm| lm.columns.len()).unwrap_or(0);
-                        ReadState::Row(token, Vec::with_capacity(len), ReadTyState::None)
+                        ReadState::Row(token, Vec::with_capacity(len), None)
                     },
                     _ => {
                         ReadState::Generic(token, Some(0))
                     }
                 };
+                self.commit_read_state(new_state);
             }
 
             match self.read_state {
-                ReadState::Generic(token, Some(size_hint)) => (token, size_hint),
-                ReadState::Row(tok, _, _) => (tok, 0),
+                Some(ReadState::Generic(token, Some(size_hint))) => (token, size_hint),
+                Some(ReadState::Row(tok, _, _)) => (tok, 0),
                 _ => unreachable!()
             }
         };
         let ret = self.parse_token(token, size_hint);
         if let Ok(Async::Ready(_)) = ret {
-            self.read_state = ReadState::None;
+            self.commit_read_state(None);
         }
         ret
     }
@@ -589,7 +587,7 @@ impl<I: Io> TdsTransport<I> {
         }
 
         loop {
-            self.last_state = self.inner.rd.clone();
+            self.last_state = Some(self.inner.rd.clone());
 
             let ret = match self.read_token() {
                 Err(TdsError::Io(ref err)) if err.kind() == ::std::io::ErrorKind::UnexpectedEof => {
@@ -597,15 +595,15 @@ impl<I: Io> TdsTransport<I> {
                 },
                 x => try!(x)
             };
+
             match ret {
                 Async::NotReady if !self.inner.packets_left && self.inner.len() == 0 => {
                     return Ok(Async::Ready(None))
                 },
                 Async::NotReady => {
-                    if self.read_reset {
-                        self.inner.rd = mem::replace(&mut self.last_state, TdsBuf::empty());
+                    if let Some(last_state) = self.last_state.take() {
+                        self.inner.rd = last_state;
                     }
-                    self.read_reset = true;
                 },
                 Async::Ready(ret) => {
                     // we only limit the current token to the current stream of packets
@@ -634,7 +632,7 @@ impl<I: Io> TdsTransport<I> {
                         },
                         _ => ()
                     }
-                    self.last_state = TdsBuf::empty();
+                    self.last_state = None;
                     return Ok(Async::Ready(Some(ret)))
                 },
             }

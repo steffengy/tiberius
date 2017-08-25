@@ -80,6 +80,7 @@ extern crate bitflags;
 extern crate bytes;
 extern crate byteorder;
 extern crate encoding;
+extern crate fnv;
 #[macro_use]
 extern crate futures;
 extern crate futures_state_stream;
@@ -91,15 +92,14 @@ extern crate tokio_io;
 extern crate winauth;
 
 use std::borrow::Cow;
-use std::cell::RefCell;
 use std::convert::From;
 use std::cmp;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::marker::PhantomData;
 use std::mem;
-use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 use std::io;
+use fnv::FnvHashMap;
 use futures::{Async, BoxFuture, Future, Poll, Sink};
 use futures::sync::oneshot;
 use futures::future::FromErr;
@@ -267,9 +267,10 @@ impl<I: BoxableIo, F: Future<Item=I, Error=TdsError> + Send> Future for SqlConne
                     let trans = future.take().unwrap().transport;
                     let conn = InnerSqlConnection {
                         transport: trans,
+                        stmts: FnvHashMap::default(),
                     };
 
-                    return Ok(Async::Ready(SqlConnection(RefCell::new(conn))))
+                    return Ok(Async::Ready(SqlConnection(conn)))
                 },
                 _ => panic!("SqlConnectionNew polled multiple times. item already consumed"),
             }
@@ -496,18 +497,11 @@ pub trait StmtResult<I: BoxableIo> {
 #[doc(hidden)]
 pub struct InnerSqlConnection<I: BoxableIo> {
     transport: TdsTransport<TransportStream<I>>,
+    stmts: FnvHashMap<String, Vec<(Vec<&'static str>, i32)>>,
 }
 
 /// A connection to a SQL server with an underlying IO (e.g. socket)
-pub struct SqlConnection<I: BoxableIo>(RefCell<InnerSqlConnection<I>>);
-
-impl<I: BoxableIo> Deref for SqlConnection<I> {
-    type Target = RefCell<InnerSqlConnection<I>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
+pub struct SqlConnection<I: BoxableIo>(InnerSqlConnection<I>);
 
 /// A variant of Io which can be boxed to allow dynamic dispatch
 pub trait BoxableIo: Io + Send {}
@@ -764,9 +758,9 @@ impl<I: BoxableIo + Sized + 'static> SqlConnection<I> {
         SqlConnectionNew::Connection(Some((stream, params)))
     }
 
-    fn queue_sql_batch<'a, S>(&self, stmt: S) -> TdsResult<()> where S: Into<Cow<'a, str>> {
+    fn queue_sql_batch<'a, S>(&mut self, stmt: S) -> TdsResult<()> where S: Into<Cow<'a, str>> {
         let sql = stmt.into();
-        let mut inner = self.borrow_mut();
+        let inner = &mut self.0;
 
         let batch_packet = try!(protocol::build_sql_batch(&mut inner.transport, &sql));
         try!(inner.transport.inner.queue_vec(batch_packet));
@@ -777,7 +771,7 @@ impl<I: BoxableIo + Sized + 'static> SqlConnection<I> {
         Ok(())
     }
 
-    fn simple_exec_internal<'a, Q, R: StmtResult<I>>(self, query: Q) -> ResultSetStream<I, R> where Q: Into<Cow<'a, str>> {
+    fn simple_exec_internal<'a, Q, R: StmtResult<I>>(mut self, query: Q) -> ResultSetStream<I, R> where Q: Into<Cow<'a, str>> {
         let result = self.queue_sql_batch(query);
 
         let ret = ResultSetStream::new(self);
@@ -808,7 +802,7 @@ impl<I: BoxableIo + Sized + 'static> SqlConnection<I> {
         self.simple_exec_internal(query)
     }
 
-    fn do_prepare_exec<'b>(&self, stmt: Statement, params: &'b [&'b ToSql]) -> TokenRpcRequest<'b> {
+    fn do_prepare_exec<'b>(&self, stmt: &Statement, params: &'b [&'b ToSql]) -> TokenRpcRequest<'b> {
         let mut param_str = String::with_capacity(10 * params.len());
 
         let mut params_meta = vec![
@@ -853,14 +847,14 @@ impl<I: BoxableIo + Sized + 'static> SqlConnection<I> {
         }
     }
 
-    fn do_exec<'a>(&self, stmt: Statement, params: &'a [&'a ToSql]) -> TokenRpcRequest<'a> {
+    fn do_exec<'a>(&self, handle: i32, params: &'a [&'a ToSql]) -> TokenRpcRequest<'a> {
         let mut params_meta = vec![
             RpcParam {
                 // handle (using "handle" here makes RpcProcId::SpExecute not work and requires RpcProcIdValue::NAME, wtf)
                 // not specifying the name is better anyways to reduce overhead on execute
                 name: Cow::Borrowed(""),
                 flags: RpcStatusFlags::empty(),
-                value: ColumnData::I32(stmt.handle.borrow().as_ref().map(|h| h.handle).unwrap()),
+                value: ColumnData::I32(handle),
             },
         ];
         for (i, param) in params.iter().enumerate() {
@@ -878,22 +872,16 @@ impl<I: BoxableIo + Sized + 'static> SqlConnection<I> {
         }
     }
 
-    fn internal_exec<R: StmtResult<I>>(self, stmt: Statement, params: &[&ToSql]) -> StmtStream<I, R> {
+    fn internal_exec<R: StmtResult<I>>(mut self, stmt: Statement, params: &[&ToSql]) -> StmtStream<I, R> {
         // call sp_prepare (with valid handle) or sp_prepexec (initializer)
-        let already_prepared = stmt.handle.borrow().as_ref().map(|handle| {
-            // check if the param-type signature matches, if we have a handle
-            handle.signature.iter().cloned().eq(params.iter().map(|x| x.to_sql()))
-        }).unwrap_or(false);
-
-        let req = if already_prepared {
-            self.do_exec(stmt.clone(), params)
+        let req = if let Some(handle) = stmt.get_handle_for(&self, &params.iter().map(|x| x.to_sql()).collect::<Vec<_>>()) {
+            self.do_exec(handle, params)
         } else {
-            *stmt.handle.borrow_mut() = None;
-            self.do_prepare_exec(stmt.clone(), params)
+            self.do_prepare_exec(&stmt, params)
         };
 
         // write everything (or atleast queue it for write)
-        let result = req.write_token(&mut self.borrow_mut().transport);
+        let result = req.write_token(&mut self.0.transport);
         let ret = StmtStream::new(self, stmt, params);
         match result {
             Ok(_) => ret,
@@ -1041,6 +1029,31 @@ mod tests {
             lp.run(future).unwrap();
         }
         assert_eq!(i, 1);
+    }
+
+    #[test]
+    fn row_recv_across_packets() {
+        let mut lp = Core::new().unwrap();
+        let c1 = new_connection(&mut lp);
+
+        let future = c1.simple_query("select SPACE(8000)").for_each_row(|row| {
+            assert_eq!(row.get::<_, &str>(0).as_bytes(), vec![b' '; 8000].as_slice());
+            Ok(())
+        });
+        lp.run(future).unwrap();
+    }
+
+    #[test]
+    fn rows_recv_across_packets() {
+        let mut lp = Core::new().unwrap();
+        let c1 = new_connection(&mut lp);
+
+        let future = c1.simple_query("select SPACE(8000), SPACE(8000)").for_each_row(|row| {
+            assert_eq!(row.get::<_, &str>(0).as_bytes(), vec![b' '; 8000].as_slice());
+            assert_eq!(row.get::<_, &str>(1).as_bytes(), vec![b' '; 8000].as_slice());
+            Ok(())
+        });
+        lp.run(future).unwrap();
     }
 
     #[test]
