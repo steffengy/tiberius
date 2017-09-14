@@ -695,6 +695,14 @@ impl<'a> ToConnectEndpoint<Box<BoxableIo>, DynamicConnectionTarget> for &'a str 
                 Cow::Borrowed(value.trim())
             };
 
+            fn parse_bool<T: AsRef<str>>(v: T) -> Result<bool, TdsError> {
+                match v.as_ref().trim().to_lowercase().as_str() {
+                    "true" | "yes" => Ok(true),
+                    "false" | "no" => Ok(false),
+                    _ => Err(TdsError::Conversion("connection string: not a valid boolean".into()))
+                }
+            }
+
             match key.as_str() {
                 "server" => {
                     if value.starts_with("tcp:") {
@@ -710,12 +718,14 @@ impl<'a> ToConnectEndpoint<Box<BoxableIo>, DynamicConnectionTarget> for &'a str 
                         target = Some(DynamicConnectionTarget::Tcp(addr));
                     }
                 },
-                "integratedsecurity" if ["true", "yes", "sspi"].contains(&value.to_lowercase().as_str()) => {
-                    #[cfg(windows)] {
-                        connect_params.auth = AuthMethod::SSPI_SSO;
-                    }
-                    #[cfg(not(windows))] {
-                        connect_params.auth = AuthMethod::WinAuth("".into(), "".into());
+                "integratedsecurity" => {
+                    if value.to_lowercase() == "sspi" || parse_bool(&value)? {
+                        #[cfg(windows)] {
+                            connect_params.auth = AuthMethod::SSPI_SSO;
+                        }
+                        #[cfg(not(windows))] {
+                            connect_params.auth = AuthMethod::WinAuth("".into(), "".into());
+                        }
                     }
                 },
                 "uid" | "username" | "user" => {
@@ -741,11 +751,17 @@ impl<'a> ToConnectEndpoint<Box<BoxableIo>, DynamicConnectionTarget> for &'a str 
                 "database" => {
                     connect_params.target_db = Some(value.into_owned().into());
                 },
-                "trustservercertificate" if ["true", "yes"].contains(&value.to_lowercase().as_str()) => {
-                    connect_params.trust_cert = true;
+                "trustservercertificate" => {
+                    connect_params.trust_cert = parse_bool(value)?;
                 },
-                "encrypt" if ["true", "yes"].contains(&value.to_lowercase().as_str()) => {
-                    connect_params.ssl = EncryptionLevel::Required;
+                "encrypt" => {
+                    connect_params.ssl = if parse_bool(value)? {
+                        EncryptionLevel::Required
+                    } else if let EncryptionLevel::NotSupported = connect_params.ssl {
+                        EncryptionLevel::NotSupported
+                    } else {
+                        EncryptionLevel::Off
+                    };
                 },
                 _ => return Err(TdsError::Conversion(format!("connection string: unknown config option: {:?}", key).into())),
             }
@@ -968,7 +984,7 @@ mod tests {
     fn str_to_connect_endpoint() {
         use ToConnectEndpoint;
         use super::{DynamicConnectionTarget, AuthMethod};
-        let ep = "server = tcp:127.0.0.1,1234 ; user=\"Test'\"\"User\";password='1''2\"3;4 '"
+        let ep = "server = tcp:127.0.0.1,1234 ; user=\"Test'\"\"User\";password='1''2\"3;4 ' ; integratedSecurity = false"
             .to_connect_endpoint().unwrap();
 
         assert_eq!(ep.target, DynamicConnectionTarget::Tcp("127.0.0.1:1234".parse().unwrap()));
