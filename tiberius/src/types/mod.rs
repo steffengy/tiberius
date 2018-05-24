@@ -841,28 +841,6 @@ mod tests {
     }
 
     #[test]
-    fn test_int1_cast() {
-        let future = SqlConnection::connect(connection_string().as_ref()).and_then(|conn| {
-            conn.simple_query("select cast(125 as int1)").for_each(|row| {
-                assert_eq!(row.get::<_, i8>(0), 125i8);
-                Ok(())
-            })
-        });
-        current_thread::block_on_all(future).unwrap();
-    }
-
-    #[test]
-    fn test_int2_cast() {
-        let future = SqlConnection::connect(connection_string().as_ref()).and_then(|conn| {
-            conn.simple_query("select cast(268 as int2)").for_each(|row| {
-                assert_eq!(row.get::<_, i16>(0), 268i16);
-                Ok(())
-            })
-        });
-        current_thread::block_on_all(future).unwrap();
-    }
-
-    #[test]
     fn test_decimal_numeric() {
         let future =
             SqlConnection::connect(connection_string().as_ref()).and_then(|conn| {
