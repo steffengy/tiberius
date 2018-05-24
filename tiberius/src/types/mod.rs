@@ -300,6 +300,9 @@ impl<'a> ColumnData<'a> {
     ) -> Poll<ColumnData<'a>, Error> {
         Ok(Async::Ready(match meta.ty {
             TypeInfo::FixedLen(ref fixed_ty) => match *fixed_ty {
+                FixedLenType::Bit => ColumnData::Bit(trans.inner.read_u8()? != 0),
+                FixedLenType::Int1 => ColumnData::I8(trans.inner.read_i8()?),
+                FixedLenType::Int2 => ColumnData::I16(trans.inner.read_i16::<LittleEndian>()?),
                 FixedLenType::Int4 => ColumnData::I32(trans.inner.read_i32::<LittleEndian>()?),
                 FixedLenType::Int8 => ColumnData::I64(trans.inner.read_i64::<LittleEndian>()?),
                 FixedLenType::Datetime => parse_datetimen(trans, 8)?,
@@ -814,6 +817,50 @@ mod tests {
         test_null_none: Option<&str> => None as Option<&str>,
         test_null_some: Option<&str> => Some("hello world")
     );
+
+    #[test]
+    fn test_bit_cast_0() {
+        let future = SqlConnection::connect(connection_string().as_ref()).and_then(|conn| {
+            conn.simple_query("select cast(0 as bit)").for_each(|row| {
+                assert_eq!(row.get::<_, bool>(0), false);
+                Ok(())
+            })
+        });
+        current_thread::block_on_all(future).unwrap();
+    }
+
+    #[test]
+    fn test_bit_cast_1() {
+        let future = SqlConnection::connect(connection_string().as_ref()).and_then(|conn| {
+            conn.simple_query("select cast(1 as bit)").for_each(|row| {
+                assert_eq!(row.get::<_, bool>(0), true);
+                Ok(())
+            })
+        });
+        current_thread::block_on_all(future).unwrap();
+    }
+
+    #[test]
+    fn test_int1_cast() {
+        let future = SqlConnection::connect(connection_string().as_ref()).and_then(|conn| {
+            conn.simple_query("select cast(125 as int1)").for_each(|row| {
+                assert_eq!(row.get::<_, i8>(0), 125i8);
+                Ok(())
+            })
+        });
+        current_thread::block_on_all(future).unwrap();
+    }
+
+    #[test]
+    fn test_int2_cast() {
+        let future = SqlConnection::connect(connection_string().as_ref()).and_then(|conn| {
+            conn.simple_query("select cast(268 as int2)").for_each(|row| {
+                assert_eq!(row.get::<_, i16>(0), 268i16);
+                Ok(())
+            })
+        });
+        current_thread::block_on_all(future).unwrap();
+    }
 
     #[test]
     fn test_decimal_numeric() {
