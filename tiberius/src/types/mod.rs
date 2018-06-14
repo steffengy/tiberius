@@ -812,4 +812,15 @@ mod tests {
             });
         current_thread::block_on_all(future).unwrap();
     }
+
+    #[test]
+    fn test_big_varchar() {
+        let future = SqlConnection::connect(connection_string().as_ref()).and_then(|conn| 
+            conn.simple_query("select replicate(cast('4' as varchar(max)), 127420)").for_each(|row| {
+                assert_eq!(row.get::<_, Option<&str>>(0).map(|x| x.chars().filter(|x| *x == '4').count()), Some(127420));
+                Ok(())
+            })
+        );
+        current_thread::block_on_all(future).unwrap();
+    }
 }
