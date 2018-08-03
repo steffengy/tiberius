@@ -647,7 +647,9 @@ from_column_data!(
                 ColumnData::I8(val) => val != 0;
     i8:         ColumnData::I8(val) => val;
     i16:        ColumnData::I16(val) => val;
-    i32:        ColumnData::I32(val) => val;
+    i32:        ColumnData::I32(val) => val,
+                ColumnData::I16(val) => val as i32,
+                ColumnData::I8(val) => val as i32;
     i64:        ColumnData::I64(val) => val;
     f32:        ColumnData::F32(val) => val;
     f64:        ColumnData::F64(val) => val;
