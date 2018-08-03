@@ -222,7 +222,11 @@ mod chrono {
                 from_days(dt.0.days() as i64, 1),
                 NaiveTime::from_hms(0,0,0) + Duration::nanoseconds(dt.1.increments as i64 * 10i64.pow(9 - dt.1.scale as u32))
             );
-        NaiveDate:      ColumnData::Date(ref date) => from_days(date.days() as i64, 1)
+        NaiveDate:      
+            ColumnData::Date(ref date) => from_days(date.days() as i64, 1),
+            ColumnData::SmallDateTime(ref dt) => from_days(dt.days as i64, 1900),
+            ColumnData::DateTime(ref dt) => from_days(dt.days as i64, 1900),
+            ColumnData::DateTime2(ref dt) => from_days(dt.0.days() as i64, 1)
     );
     to_column_data!(self_,
         NaiveDateTime => {
