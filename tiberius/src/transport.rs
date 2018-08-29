@@ -1,21 +1,21 @@
 //! low level transport that deals with reading bytes from an underlying Io
 //! handling data split accross packets, etc.
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use bytes::{BufMut, Bytes, BytesMut};
+use futures::{Async, Poll, Sink, StartSend};
+use plp::{ReadTyMode, ReadTyState};
+use protocol::{self, PacketHeader, PacketStatus};
 use std::collections::VecDeque;
 use std::fmt;
 use std::io::{self, Cursor, Write};
 use std::mem;
 use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
 use std::str;
-use tokio::io::{AsyncRead, AsyncWrite};
-use bytes::{BufMut, Bytes, BytesMut};
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use futures::{Async, Poll, Sink, StartSend};
-use protocol::{self, PacketHeader, PacketStatus};
-use plp::{ReadTyMode, ReadTyState};
+use std::sync::Arc;
 use tokens::{TdsResponseToken, TokenColMetaData, TokenEnvChange, Tokens};
+use tokio::io::{AsyncRead, AsyncWrite};
 use types::ColumnData;
-use {FromUint, Error};
+use {Error, FromUint};
 
 pub trait Io: AsyncRead + AsyncWrite {}
 impl<I: AsyncRead + AsyncWrite> Io for I {}
@@ -25,13 +25,13 @@ pub mod tls {
     extern crate native_tls;
     extern crate tokio_tls;
 
+    pub use self::tokio_tls::{Connect, TlsStream};
+    use futures::Poll;
+    use protocol::{self, PacketHeader, PacketStatus, PacketType};
     use std::cmp;
     use std::io::{self, Read, Write};
-    use futures::Poll;
     use tokio::io::{AsyncRead, AsyncWrite};
-    use protocol::{self, PacketHeader, PacketStatus, PacketType};
     use transport::Io;
-    pub use self::tokio_tls::{Connect, TlsStream};
     use Error;
 
     impl From<native_tls::Error> for Error {
@@ -218,9 +218,10 @@ pub mod tls {
         let mut builder = native_tls::TlsConnector::builder();
 
         if disable_verification {
-            builder.danger_accept_invalid_certs(true)
-                   .danger_accept_invalid_hostnames(true)
-                   .use_sni(false);
+            builder
+                .danger_accept_invalid_certs(true)
+                .danger_accept_invalid_hostnames(true)
+                .use_sni(false);
         }
 
         let cx = builder.build().unwrap();
@@ -396,11 +397,11 @@ impl<I: Io> TdsTransport<I> {
             // read the associated length for a token, if available
             if let Some(ReadState::Generic(token, None)) = self.read_state {
                 let new_state = match token {
-                    Tokens::SSPI |
-                    Tokens::EnvChange |
-                    Tokens::Info |
-                    Tokens::Error |
-                    Tokens::LoginAck => ReadState::Generic(
+                    Tokens::SSPI
+                    | Tokens::EnvChange
+                    | Tokens::Info
+                    | Tokens::Error
+                    | Tokens::LoginAck => ReadState::Generic(
                         token,
                         Some(self.inner.read_u16::<LittleEndian>()? as usize),
                     ),
@@ -470,8 +471,8 @@ impl<I: Io> TdsTransport<I> {
                                 TokenEnvChange::BeginTransaction(trans_id) => {
                                     self.transaction = trans_id;
                                 }
-                                TokenEnvChange::RollbackTransaction(old_trans_id) |
-                                TokenEnvChange::CommitTransaction(old_trans_id) => {
+                                TokenEnvChange::RollbackTransaction(old_trans_id)
+                                | TokenEnvChange::CommitTransaction(old_trans_id) => {
                                     assert_eq!(self.transaction, old_trans_id);
                                     self.transaction = 0;
                                 }
@@ -569,7 +570,11 @@ impl<I: Io> TdsTransportInner<I> {
     }
 
     /// read byte string with or without PLP
-    pub fn read_plp_type(&mut self, state: &mut Option<ReadState>, mode: ReadTyMode) -> Poll<Option<Vec<u8>>, Error> {
+    pub fn read_plp_type(
+        &mut self,
+        state: &mut Option<ReadState>,
+        mode: ReadTyMode,
+    ) -> Poll<Option<Vec<u8>>, Error> {
         match *state {
             Some(ReadState::Type(_)) => (),
             _ => *state = Some(ReadState::Type(ReadTyState::new(mode))),
@@ -618,12 +623,10 @@ impl<I: Io> TdsTransportInner<I> {
             while self.missing > 0 {
                 let amount = try_ready!(self.io.poll_read(&mut self.hrd[offset..]));
                 if amount == 0 {
-                    return Err(
-                        io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "unexpected EOF during header retrieval",
-                        ).into(),
-                    );
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "unexpected EOF during header retrieval",
+                    ).into());
                 }
                 self.missing -= amount;
                 offset += amount;
@@ -653,19 +656,18 @@ impl<I: Io> TdsTransportInner<I> {
                     }
                 };
                 unsafe {
-                    let count_result = self.io.poll_read(&mut write_buf.bytes_mut()[..self.missing]);
+                    let count_result = self.io
+                        .poll_read(&mut write_buf.bytes_mut()[..self.missing]);
                     if let Ok(Async::Ready(count)) = count_result {
                         write_buf.advance_mut(count);
                     }
                     mem::replace(self.rd.get_mut(), write_buf.freeze());
                     self.missing -= match try_ready!(count_result) {
                         0 => {
-                            return Err(
-                                io::Error::new(
-                                    io::ErrorKind::UnexpectedEof,
-                                    "unexpected EOF in packet body",
-                                ).into(),
-                            )
+                            return Err(io::Error::new(
+                                io::ErrorKind::UnexpectedEof,
+                                "unexpected EOF in packet body",
+                            ).into())
                         }
                         count => count,
                     };
