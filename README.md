@@ -58,7 +58,18 @@ type please create an issue, which will make this table grow.
 |DATETIME|tiberius::ty::DateTime
 |DATETIME2|tiberius::ty::DateTime2
 |DATETIME,DATETIME2|chrono::NaiveDateTime|chrono|
-
 Support for versions below 7.4 (to 7.2 so that everything >= SQL Server 2008 works) is desired.
+
+### Connection String Parameters
+|Parameter|Possible Values|
+|--------|--------|
+|server|server|
+|integratedsecurity|integratedsecurity|
+|username|uid, username, user|
+|password|password, pwd|
+|database|database|
+|trustservercertificate|trustservercertificate|
+|encrypt|encrypt|
+
 ## Old State (v0.1)
 The old state can be found [in the "old" branch (click me)](https://github.com/steffengy/tiberius/tree/old)
