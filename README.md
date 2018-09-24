@@ -64,15 +64,15 @@ Support for versions below 7.4 (to 7.2 so that everything >= SQL Server 2008 wor
 
 Not every parameter is supported yet. Below is a list of all parameters supported.
 
-|Parameter|Aliases|Description|
-|--------|--------|--------|
-|server|server|The name or network address of the instance of SQL Server to which to connect. The port number can be specified after the server name:|
-|integratedsecurity|integratedsecurity|When `false`, User ID and Password are specified in the connection. When `true`, the current Windows account credentials are used for authentication.|
-|username|uid, username, user|The SQL Server login account. Not recommended. To maintain a high level of security, we strongly recommend that you use the `Integrated Security` or `Trusted_Connection` keywords instead. [SqlCredential](https://docs.microsoft.com/en-us/dotnet/api/system.data.sqlclient.sqlcredential?view=netframework-4.7.2) is a more secure way to specify credentials for a connection that uses SQL Server Authentication.|
-|password|password, pwd|The password for the SQL Server account logging on. Not recommended. To maintain a high level of security, we strongly recommend that you use the `Integrated Security` or `Trusted_Connection` keyword instead. [SqlCredential](https://docs.microsoft.com/en-us/dotnet/api/system.data.sqlclient.sqlcredential?view=netframework-4.7.2) is a more secure way to specify credentials for a connection that uses SQL Server Authentication.|
-|database|database|The name of the database.|
-|trustservercertificate|trustservercertificate|When set to `true`, SSL is used to encrypt the channel when bypassing walking the certificate chain to validate trust. If TrustServerCertificate is set to `true` and Encrypt is set to `false`, the channel is not encrypted. Recognized values are `true`, `false`, `yes`, and `no`. For more information, see [Connection String Syntax](https://docs.microsoft.com/en-us/dotnet/framework/data/adonet/connection-string-syntax?view=netframework-4.7.2).|
-|encrypt|encrypt|When `true`, SQL Server uses SSL encryption for all data sent between the client and server if the server has a certificate installed. Recognized values are `true`, `false`, `yes`, and `no`. For more information, [Connection String Syntax](https://docs.microsoft.com/en-us/dotnet/framework/data/adonet/connection-string-syntax?view=netframework-4.7.2).|
+|Parameters|Description|
+|--------|--------|
+|server|The name or network address of the instance of SQL Server to which to connect. The port number can be specified after the server name.|
+|integratedsecurity|Toggle between Windows authentication and SQL authentication.|
+|uid, username, user|The SQL Server login account.|
+|password, pwd|The password for the SQL Server account logging on.|
+|database|The name of the database.|
+|trustservercertificate|Specifies whether the driver trusts the server certificate when connecting using TLS.|
+|encrypt|Specifies whether the driver uses TLS to encrypt communication.|
 
 
 ## Old State (v0.1)
