@@ -1,16 +1,16 @@
+use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
+use collation;
+use encoding::{DecoderTrap, Encoding};
+use futures::{Async, Poll};
+use plp::ReadTyMode;
+use protocol::PLPChunkWriter;
 ///! type converting, mostly translating the types received from the database into rust types
 use std::borrow::Cow;
 use std::fmt;
 use std::io::Write;
-use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
-use encoding::{DecoderTrap, Encoding};
-use futures::{Async, Poll};
 use tokens::BaseMetaDataColumn;
-use protocol::PLPChunkWriter;
 use transport::{Io, NoLength, PrimitiveWrites, Str, TdsTransport};
-use plp::ReadTyMode;
-use collation;
-use {FromUint, Error, Result};
+use {Error, FromUint, Result};
 
 macro_rules! from_column_data {
     ($( $ty:ty: $($pat:pat => $val:expr),* );* ) => {
@@ -56,8 +56,10 @@ mod time;
 
 /// Exported Datatypes (Dates, GUID, ...)
 pub mod prelude {
-    pub use super::Guid;
     pub use super::time::{Date, DateTime, DateTime2, SmallDateTime, Time};
+    pub use super::ColumnData;
+    pub use super::FromColumnData;
+    pub use super::Guid;
     pub use super::ToSql;
 }
 
@@ -234,24 +236,30 @@ impl TypeInfo {
         }
         if let Some(ty) = VarLenType::from_u8(ty) {
             let len = match ty {
-                VarLenType::Bitn |
-                VarLenType::Intn |
-                VarLenType::Floatn |
-                VarLenType::Decimaln |
-                VarLenType::Numericn |
-                VarLenType::Guid |
-                VarLenType::Money |
-                VarLenType::Datetimen |
-                VarLenType::Timen |
-                VarLenType::Datetime2 => trans.inner.read_u8()? as usize,
-                VarLenType::NChar | VarLenType::NVarchar | VarLenType::BigVarChar | VarLenType::BigBinary => {
-                    trans.inner.read_u16::<LittleEndian>()? as usize
-                }
+                VarLenType::Bitn
+                | VarLenType::Intn
+                | VarLenType::Floatn
+                | VarLenType::Decimaln
+                | VarLenType::Numericn
+                | VarLenType::Guid
+                | VarLenType::Money
+                | VarLenType::Datetimen
+                | VarLenType::Timen
+                | VarLenType::Datetime2 => trans.inner.read_u8()? as usize,
+                VarLenType::NChar
+                | VarLenType::NVarchar
+                | VarLenType::BigVarChar
+                | VarLenType::BigChar
+                | VarLenType::BigBinary => trans.inner.read_u16::<LittleEndian>()? as usize,
                 VarLenType::Daten => 3,
-                _ => unimplemented!(),
+                other => unimplemented!(),
             };
+
             let collation = match ty {
-                VarLenType::NChar | VarLenType::NVarchar | VarLenType::BigVarChar => Some(Collation {
+                VarLenType::NChar
+                | VarLenType::NVarchar
+                | VarLenType::BigVarChar
+                | VarLenType::BigChar => Some(Collation {
                     info: trans.inner.read_u32::<LittleEndian>()?,
                     sort_id: trans.inner.read_u8()?,
                 }),
@@ -266,6 +274,7 @@ impl TypeInfo {
                 },
                 _ => TypeInfo::VarLenSized(ty, len, collation),
             };
+
             return Ok(Async::Ready(vty));
         }
         Err(Error::Protocol(
@@ -358,7 +367,7 @@ impl<'a> ColumnData<'a> {
                                 let mut data = [0u8; 16];
                                 try_ready!(trans.inner.read_bytes_to(&mut data));
                                 ColumnData::Guid(Cow::Owned(Guid(data)))
-                            },
+                            }
                             _ => {
                                 return Err(Error::Protocol(
                                     format!("guid: length of {} is invalid", len).into(),
@@ -375,11 +384,12 @@ impl<'a> ColumnData<'a> {
                             ReadTyMode::auto(*len)
                         };
 
-                        let data = try_ready!(trans.inner.read_plp_type(&mut trans.read_state, mode));
+                        let data =
+                            try_ready!(trans.inner.read_plp_type(&mut trans.read_state, mode));
 
                         let ret = if let Some(buf) = data {
                             if buf.len() % 2 != 0 {
-                                return Err(Error::Protocol("nvarchar: invalid plp length".into()))
+                                return Err(Error::Protocol("nvarchar: invalid plp length".into()));
                             }
                             let buf: Vec<_> = buf.chunks(2).map(LittleEndian::read_u16).collect();
                             let str_ = String::from_utf16(&buf)?;
@@ -391,25 +401,25 @@ impl<'a> ColumnData<'a> {
                         trans.state_tracked = false;
                         ret
                     }
-                    VarLenType::BigVarChar => {
+                    VarLenType::BigChar | VarLenType::BigVarChar => {
                         trans.state_tracked = true;
 
                         let mode = ReadTyMode::auto(*len);
-                        let data = try_ready!(trans.inner.read_plp_type(&mut trans.read_state, mode));
+                        let data =
+                            try_ready!(trans.inner.read_plp_type(&mut trans.read_state, mode));
 
-                        let ret = if let Some(bytes) = data {
-                            let encoder = collation
-                                .as_ref()
-                                .unwrap()
-                                .encoding()
-                                .ok_or(Error::Encoding("encoding: unspported encoding".into()))?;
-                            let str_: String = encoder
-                                .decode(bytes.as_ref(), DecoderTrap::Strict)
-                                .map_err(Error::Encoding)?;
-                            ColumnData::String(str_.into())
-                        } else {
-                            ColumnData::None
-                        };
+                        let ret =
+                            if let Some(bytes) = data {
+                                let encoder = collation.as_ref().unwrap().encoding().ok_or(
+                                    Error::Encoding("encoding: unspported encoding".into()),
+                                )?;
+                                let str_: String = encoder
+                                    .decode(bytes.as_ref(), DecoderTrap::Strict)
+                                    .map_err(Error::Encoding)?;
+                                ColumnData::String(str_.into())
+                            } else {
+                                ColumnData::None
+                            };
 
                         trans.state_tracked = false;
                         ret
@@ -469,7 +479,8 @@ impl<'a> ColumnData<'a> {
                         trans.state_tracked = true;
 
                         let mode = ReadTyMode::auto(*len);
-                        let data = try_ready!(trans.inner.read_plp_type(&mut trans.read_state, mode));
+                        let data =
+                            try_ready!(trans.inner.read_plp_type(&mut trans.read_state, mode));
 
                         let ret = if let Some(buf) = data {
                             ColumnData::Binary(buf.into())
@@ -638,10 +649,10 @@ impl<'a> ColumnData<'a> {
             }
             ColumnData::Binary(ref buf) => {
                 target.write_u8(VarLenType::BigBinary as u8)?;
-                target.write_u16::<LittleEndian>(buf.len() as u16)?; 
+                target.write_u16::<LittleEndian>(buf.len() as u16)?;
                 target.write_all(buf)?;
             }
-            _ => unimplemented!()
+            _ => unimplemented!(),
         }
         Ok(())
     }
@@ -724,9 +735,7 @@ impl<'a> ToSql for &'a str {
 
 impl<T: ToSql> ToSql for Option<T> {
     fn to_sql(&self) -> &'static str {
-        self.as_ref()
-            .map(ToSql::to_sql)
-            .unwrap_or("int")
+        self.as_ref().map(ToSql::to_sql).unwrap_or("int")
     }
 }
 
@@ -740,13 +749,13 @@ impl<T: ToSql> ToColumnData for Option<T> {
 
 #[cfg(test)]
 mod tests {
-    use tokio::executor::current_thread;
+    use super::Guid;
     use futures::Future;
     use futures_state_stream::StateStream;
-    use super::Guid;
-    use SqlConnection;
-    use tests::connection_string;
     use std::iter;
+    use tests::connection_string;
+    use tokio::executor::current_thread;
+    use SqlConnection;
 
     /// prepares a statement which selects a passed value
     /// this tests serialization of a parameter and deserialization
@@ -813,68 +822,74 @@ mod tests {
 
     #[test]
     fn test_decimal_numeric() {
-        let future =
-            SqlConnection::connect(connection_string().as_ref()).and_then(|conn| {
-                conn.simple_query("select 18446744073709554899982888888888")
-                    .for_each(|row| {
-                        assert_eq!(row.get::<_, f64>(0), 18446744073709554000000000000000f64);
-                        Ok(())
-                    })
-            });
+        let future = SqlConnection::connect(connection_string().as_ref()).and_then(|conn| {
+            conn.simple_query("select 18446744073709554899982888888888")
+                .for_each(|row| {
+                    assert_eq!(row.get::<_, f64>(0), 18446744073709554000000000000000f64);
+                    Ok(())
+                })
+        });
         current_thread::block_on_all(future).unwrap();
     }
 
     #[test]
     fn test_money() {
-        let future =
-            SqlConnection::connect(connection_string().as_ref()).and_then(|conn| {
-                conn.simple_query("select cast(32.32 as smallmoney), cast(3333333 as money)")
-                    .for_each(|row| {
-                        assert_eq!(row.get::<_, f64>(0), 32.32f64);
-                        assert_eq!(row.get::<_, f64>(1), 3333333f64);
-                        Ok(())
-                    })
-            });
+        let future = SqlConnection::connect(connection_string().as_ref()).and_then(|conn| {
+            conn.simple_query("select cast(32.32 as smallmoney), cast(3333333 as money)")
+                .for_each(|row| {
+                    assert_eq!(row.get::<_, f64>(0), 32.32f64);
+                    assert_eq!(row.get::<_, f64>(1), 3333333f64);
+                    Ok(())
+                })
+        });
         current_thread::block_on_all(future).unwrap();
     }
 
     #[test]
     fn test_nchar() {
-        let future = SqlConnection::connect(connection_string().as_ref())
-            .and_then(|conn| {
-                conn.simple_query("select cast(NULL as nchar(8))").for_each(|row| {
+        let future = SqlConnection::connect(connection_string().as_ref()).and_then(|conn| {
+            conn.simple_query("select cast(NULL as nchar(8))")
+                .for_each(|row| {
                     assert_eq!(row.get::<_, Option<&str>>(0), None);
                     Ok(())
-                }).and_then(|conn|
-                    conn.simple_query("select cast('test' as nchar(8))").for_each(|row| {
-                        assert_eq!(row.get::<_, Option<&str>>(0), Some("test    "));
-                        Ok(())
-                    })
-                )
-            });
+                })
+                .and_then(|conn| {
+                    conn.simple_query("select cast('test' as nchar(8))")
+                        .for_each(|row| {
+                            assert_eq!(row.get::<_, Option<&str>>(0), Some("test    "));
+                            Ok(())
+                        })
+                })
+        });
         current_thread::block_on_all(future).unwrap();
     }
 
     #[test]
     fn test_big_varchar() {
-        let future = SqlConnection::connect(connection_string().as_ref()).and_then(|conn| 
-            conn.simple_query("select replicate(cast('4' as varchar(max)), 127420)").for_each(|row| {
-                assert_eq!(row.get::<_, Option<&str>>(0).map(|x| x.chars().filter(|x| *x == '4').count()), Some(127420));
-                Ok(())
-            })
-        );
+        let future = SqlConnection::connect(connection_string().as_ref()).and_then(|conn| {
+            conn.simple_query("select replicate(cast('4' as varchar(max)), 127420)")
+                .for_each(|row| {
+                    assert_eq!(
+                        row.get::<_, Option<&str>>(0)
+                            .map(|x| x.chars().filter(|x| *x == '4').count()),
+                        Some(127420)
+                    );
+                    Ok(())
+                })
+        });
         current_thread::block_on_all(future).unwrap();
     }
 
     #[test]
     fn test_binary() {
-        let future = SqlConnection::connect(connection_string().as_ref()).and_then(|conn| 
-            conn.simple_query(r#"select cast(5 as binary(8000/*max for binary type*/))"#).for_each(|row| {
-                assert_eq!(row.get::<_, Option<&[u8]>>(0).map(|x| x.len()), Some(8000));
-                assert_eq!(row.get::<_, Option<&[u8]>>(0).map(|x| x[7999]), Some(5u8));
-                Ok(())
-            })
-        );
+        let future = SqlConnection::connect(connection_string().as_ref()).and_then(|conn| {
+            conn.simple_query(r#"select cast(5 as binary(8000/*max for binary type*/))"#)
+                .for_each(|row| {
+                    assert_eq!(row.get::<_, Option<&[u8]>>(0).map(|x| x.len()), Some(8000));
+                    assert_eq!(row.get::<_, Option<&[u8]>>(0).map(|x| x[7999]), Some(5u8));
+                    Ok(())
+                })
+        });
         current_thread::block_on_all(future).unwrap();
     }
 }

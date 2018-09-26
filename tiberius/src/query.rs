@@ -1,11 +1,12 @@
 //! Query results and resultsets
-use std::marker::PhantomData;
-use futures::{Async, Future, Poll, Sink, Stream};
 use futures::sync::oneshot;
+use futures::{Async, Future, Poll, Sink, Stream};
 use futures_state_stream::{StateStream, StreamEvent};
-use tokens::{DoneStatus, TdsResponseToken, TokenRow};
-use types::FromColumnData;
-use {BoxableIo, SqlConnection, StmtResult, Error, Result};
+use std::marker::PhantomData;
+use std::{iter, slice};
+use tokens::{DoneStatus, MetaDataColumn, TdsResponseToken, TokenRow};
+use types::{ColumnData, FromColumnData};
+use {BoxableIo, Error, Result, SqlConnection, StmtResult};
 
 /// A query result consists of multiple query streams (amount of executed queries = amount of results)
 #[must_use = "streams do nothing unless polled"]
@@ -94,9 +95,9 @@ impl<I: BoxableIo, R: StmtResult<I>> StateStream for ResultSetStream<I, R> {
                 let conn = self.conn.take().unwrap();
                 let (sender, receiver) = oneshot::channel();
                 self.receiver = Some(receiver);
-                return Ok(Async::Ready(
-                    StreamEvent::Next(R::from_connection(conn, sender)),
-                ));
+                return Ok(Async::Ready(StreamEvent::Next(R::from_connection(
+                    conn, sender,
+                ))));
             }
         }
         let conn = self.conn.take().unwrap();
@@ -107,17 +108,16 @@ impl<I: BoxableIo, R: StmtResult<I>> StateStream for ResultSetStream<I, R> {
 /// A stream of [`Rows`](struct.QueryRow.html) returned for the current resultset
 #[must_use = "streams do nothing unless polled"]
 pub struct QueryStream<I: BoxableIo> {
-    inner: ResultInner<I>
+    inner: ResultInner<I>,
 }
 
-struct ResultInner<I: BoxableIo> (
-    Option<(SqlConnection<I>, oneshot::Sender<SqlConnection<I>>)>,
-);
+struct ResultInner<I: BoxableIo>(Option<(SqlConnection<I>, oneshot::Sender<SqlConnection<I>>)>);
 
 impl<I: BoxableIo> ResultInner<I> {
     fn send_back(&mut self) -> Result<bool> {
         if let Some((conn, ret_conn)) = self.0.take() {
-            ret_conn.send(conn)
+            ret_conn
+                .send(conn)
                 .map_err(|_| Error::Canceled)
                 .map(|_| true)
         } else {
@@ -168,7 +168,10 @@ impl<'a, I: BoxableIo> Stream for QueryStream<I> {
 impl<'a, I: BoxableIo> StmtResult<I> for QueryStream<I> {
     type Result = QueryStream<I>;
 
-    fn from_connection(conn: SqlConnection<I>, ret_conn: oneshot::Sender<SqlConnection<I>>) -> QueryStream<I> {
+    fn from_connection(
+        conn: SqlConnection<I>,
+        ret_conn: oneshot::Sender<SqlConnection<I>>,
+    ) -> QueryStream<I> {
         QueryStream {
             inner: ResultInner(Some((conn, ret_conn))),
         }
@@ -203,9 +206,9 @@ impl<I: BoxableIo> Future for ExecFuture<I> {
                         self.single_token = false;
                         false
                     }
-                    TdsResponseToken::Done(ref done) |
-                    TdsResponseToken::DoneInProc(ref done) |
-                    TdsResponseToken::DoneProc(ref done) => {
+                    TdsResponseToken::Done(ref done)
+                    | TdsResponseToken::DoneInProc(ref done)
+                    | TdsResponseToken::DoneProc(ref done) => {
                         let final_token = match token {
                             TdsResponseToken::Done(_) | TdsResponseToken::DoneProc(_) => true,
                             _ => false,
@@ -216,7 +219,8 @@ impl<I: BoxableIo> Future for ExecFuture<I> {
                         }
                         // if this is the final done token, we need to reinject it for result set stream to handle it
                         // (as in querying, if self.single_token it already was reinjected and would result in an infinite cycle)
-                        let reinject = !done.status.contains(DoneStatus::MORE) && !self.single_token
+                        let reinject = !done.status.contains(DoneStatus::MORE)
+                            && !self.single_token
                             && final_token;
                         if !reinject {
                             break;
@@ -252,7 +256,7 @@ impl<I: BoxableIo> StmtResult<I> for ExecFuture<I> {
 
 /// A row in one resultset of a query
 #[derive(Debug)]
-pub struct QueryRow(TokenRow);
+pub struct QueryRow(pub TokenRow);
 
 /// Anything that can be used as an index to get a specific row.
 ///
@@ -286,10 +290,7 @@ impl QueryRow {
     }
 
     /// Attempt to get a column's value for a given column index
-    pub fn try_get<'a, I: QueryIdx, R: FromColumnData<'a>>(
-        &'a self,
-        idx: I,
-    ) -> Result<Option<R>> {
+    pub fn try_get<'a, I: QueryIdx, R: FromColumnData<'a>>(&'a self, idx: I) -> Result<Option<R>> {
         let idx = match idx.to_idx(self) {
             Some(x) => x,
             None => return Ok(None),
@@ -297,6 +298,11 @@ impl QueryRow {
 
         let col_data = &self.0.columns[idx];
         R::from_column_data(col_data).map(Some)
+    }
+    pub fn iter(
+        &self,
+    ) -> iter::Zip<slice::Iter<'_, MetaDataColumn>, slice::Iter<'_, ColumnData<'_>>> {
+        self.0.meta.columns.iter().zip(self.0.columns.iter())
     }
 
     /// Retrieve a column's value for a given column index
