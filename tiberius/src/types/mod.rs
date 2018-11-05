@@ -244,11 +244,11 @@ impl TypeInfo {
                 VarLenType::Datetimen |
                 VarLenType::Timen |
                 VarLenType::Datetime2 => trans.inner.read_u8()? as usize,
-                VarLenType::NChar | VarLenType::NVarchar | VarLenType::BigVarChar | VarLenType::BigBinary => {
+                VarLenType::NChar | VarLenType::NVarchar | VarLenType::BigVarChar | VarLenType::BigBinary | VarLenType::BigVarBin => {
                     trans.inner.read_u16::<LittleEndian>()? as usize
                 }
                 VarLenType::Daten => 3,
-                _ => unimplemented!(),
+                val => unimplemented!("{:?}", val),
             };
             let collation = match ty {
                 VarLenType::NChar | VarLenType::NVarchar | VarLenType::BigVarChar => Some(Collation {
@@ -465,7 +465,7 @@ impl<'a> ColumnData<'a> {
                         let date = time::Date::new(LittleEndian::read_u32(&bytes));
                         ColumnData::DateTime2(time::DateTime2(date, time))
                     }
-                    VarLenType::BigBinary => {
+                    VarLenType::BigBinary |  VarLenType::BigVarBin  => {
                         trans.state_tracked = true;
 
                         let mode = ReadTyMode::auto(*len);
@@ -480,7 +480,7 @@ impl<'a> ColumnData<'a> {
                         trans.state_tracked = false;
                         ret
                     }
-                    _ => unimplemented!(),
+                    val => unimplemented!("{:?}", val),
                 }
             }
             TypeInfo::VarLenSizedPrecision {
