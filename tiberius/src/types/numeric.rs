@@ -44,7 +44,7 @@ impl Numeric {
 
 impl Debug for Numeric {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{}.{}", self.int_part(), self.dec_part())
+        write!(f, "{}.{:0pad$}", self.int_part(), self.dec_part(), pad = self.scale as usize)
     }
 }
 
