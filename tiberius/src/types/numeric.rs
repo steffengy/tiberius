@@ -27,18 +27,30 @@ impl Numeric {
 
     /// Extract the decimal part.
     pub fn dec_part(self) -> i128 {
-        let scale = self.scale();
+        let scale = self.pow_scale();
         self.value - (self.value / scale) * scale
     }
 
     /// Extract the integer part.
     pub fn int_part(self) -> i128 {
-        self.value / self.scale()
+        self.value / self.pow_scale()
     }
 
     #[inline]
-    fn scale(self) -> i128 {
+    fn pow_scale(self) -> i128 {
         10i128.pow(self.scale as u32)
+    }
+
+    /// The scale (where is the decimal point) of the value.
+    #[inline]
+    pub fn scale(&self) -> u8 {
+        self.scale
+    }
+
+    /// The internal integer value
+    #[inline]
+    pub fn value(&self) -> i128 {
+        self.value
     }
 }
 
@@ -58,7 +70,7 @@ impl Eq for Numeric {}
 
 impl From<Numeric> for f64 {
     fn from(n: Numeric) -> f64 {
-        n.dec_part() as f64 / n.scale() as f64 + n.int_part() as f64
+        n.dec_part() as f64 / n.pow_scale() as f64 + n.int_part() as f64
     }
 }
 
