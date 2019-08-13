@@ -536,12 +536,12 @@ impl<'a> ColumnData<'a> {
                                 9 => trans.inner.read_u64::<LittleEndian>()? as i128 * sign,
                                 13 => {
                                     let mut bytes = [0u8; 12]; //u96
-                                    trans.inner.read_bytes_to(&mut bytes)?;
+                                    try_ready!(trans.inner.read_bytes_to(&mut bytes));
                                     read_d128(&bytes) as i128 * sign
                                 }
                                 17 => {
                                     let mut bytes = [0u8; 16]; //u128
-                                    trans.inner.read_bytes_to(&mut bytes)?;
+                                    try_ready!(trans.inner.read_bytes_to(&mut bytes));
                                     read_d128(&bytes) as i128 * sign
                                 }
                                 x => {
