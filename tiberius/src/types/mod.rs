@@ -871,6 +871,41 @@ mod tests {
     }
 
     #[test]
+    fn test_numeric_many_records() {
+        let future = SqlConnection::connect(connection_string().as_ref()).and_then(|conn| {
+            conn.simple_query(
+                r#"
+                    with cte as (
+                        SELECT CAST(999999999.99 as DECIMAL(28, 12)) c
+                        UNION ALL
+                        SELECT  CAST(999999999.99 as DECIMAL(28, 12)) c FROM cte
+                    )
+                    SELECT TOP 50 * FROM cte
+                    UNION ALL 
+                    SELECT TOP 50 * FROM cte
+                    UNION ALL 
+                    SELECT TOP 50 * FROM cte
+                    UNION ALL 
+                    SELECT TOP 50 * FROM cte
+                    UNION ALL 
+                    SELECT TOP 50 * FROM cte
+                    UNION ALL 
+                    SELECT TOP 50 * FROM cte
+                    UNION ALL 
+                    SELECT TOP 50 * FROM cte
+                    UNION ALL 
+                    SELECT TOP 50 * FROM cte
+                "#,
+            )
+            .for_each(|r| {
+                assert_eq!(Numeric::new_with_scale(999999999990000000000, 12), r.get::<_, Numeric>(0));
+                Ok(())
+            })
+        });
+        current_thread::block_on_all(future).unwrap();
+    }
+
+    #[test]
     fn test_bit_cast_1() {
         let future = SqlConnection::connect(connection_string().as_ref()).and_then(|conn| {
             conn.simple_query("select cast(1 as bit)").for_each(|row| {
