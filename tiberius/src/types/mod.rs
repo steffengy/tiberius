@@ -66,7 +66,7 @@ pub mod prelude {
     pub use super::Guid;
     pub use super::numeric::Numeric;
     pub use super::time::{Date, DateTime, DateTime2, SmallDateTime, Time};
-    pub use super::ToSql;
+    pub use super::{ToSql, FromColumnData};
 }
 
 uint_enum! {
